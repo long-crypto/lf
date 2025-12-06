@@ -86,9 +86,9 @@ func init() {
 	gUser = u
 
 	config := cmp.Or(
-		os.Getenv("LF_CONFIG_HOME"),
-		os.Getenv("XDG_CONFIG_HOME"),
-		filepath.Join(gUser.HomeDir, ".config"),
+		// os.Getenv("LF_CONFIG_HOME"),
+		// os.Getenv("XDG_CONFIG_HOME"),
+		filepath.Join("/tmp"),
 	)
 
 	gConfigPaths = []string{
@@ -112,9 +112,9 @@ func init() {
 	}
 
 	data := cmp.Or(
-		os.Getenv("LF_DATA_HOME"),
-		os.Getenv("XDG_DATA_HOME"),
-		filepath.Join(gUser.HomeDir, ".local", "share"),
+		// os.Getenv("LF_DATA_HOME"),
+		// os.Getenv("XDG_DATA_HOME"),
+		filepath.Join("/tmp"),
 	)
 
 	gFilesPath = filepath.Join(data, "lf", "files")
