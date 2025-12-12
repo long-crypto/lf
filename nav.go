@@ -930,7 +930,7 @@ func (nav *nav) preview(path string, win *win, mode string) {
 
 func (nav *nav) loadReg(path string, volatile bool) *reg {
 	r, ok := nav.regCache[path]
-	if !ok {
+	if !ok || (!gOpts.preload && r.loading) {
 		r = &reg{loading: true, loadTime: time.Now(), path: path}
 		nav.regCache[path] = r
 		nav.startPreview()
@@ -1383,7 +1383,7 @@ loop:
 		nav.renew()
 		app.ui.loadFile(app, true)
 	} else {
-		if err := remote("send load"); err != nil {
+		if _, err := remote("send load"); err != nil {
 			sendErr("%v", err)
 		}
 	}
@@ -1489,7 +1489,7 @@ func (nav *nav) moveAsync(app *app, srcs []string, dstDir string) {
 		nav.renew()
 		app.ui.loadFile(app, true)
 	} else {
-		if err := remote("send load"); err != nil {
+		if _, err := remote("send load"); err != nil {
 			sendErr("%v", err)
 		}
 	}
@@ -1549,7 +1549,7 @@ func (nav *nav) del(app *app) error {
 			nav.renew()
 			app.ui.loadFile(app, true)
 		} else {
-			if err := remote("send load"); err != nil {
+			if _, err := remote("send load"); err != nil {
 				errCount++
 				echo.args[0] = fmt.Sprintf("[%d] %s", errCount, err)
 				app.ui.exprChan <- echo
