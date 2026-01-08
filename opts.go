@@ -227,8 +227,8 @@ func init() {
 	gOpts.filtermethod = textSearch
 	gOpts.findlen = 1
 	gOpts.hidden = false
-	gOpts.hiddenfiles = gDefaultHiddenFiles
-	gOpts.history = true
+	gOpts.hiddenfiles = nil
+	gOpts.history = false
 	gOpts.icons = false
 	gOpts.ifs = ""
 	gOpts.ignorecase = true
@@ -242,7 +242,7 @@ func init() {
 	gOpts.menuheaderfmt = "\033[1m"
 	gOpts.menuselectfmt = "\033[7m"
 	gOpts.mergeindicators = false
-	gOpts.mouse = false
+	gOpts.mouse = true
 	gOpts.number = false
 	gOpts.numberfmt = "\033[33m"
 	gOpts.period = 0
@@ -356,6 +356,8 @@ func init() {
 		"sc": &listExpr{[]expr{&setExpr{"sortby", "ctime"}, &setExpr{"info", "ctime"}}, 1},
 		"se": &listExpr{[]expr{&setExpr{"sortby", "ext"}, &setExpr{"info", ""}}, 1},
 		"gh": &callExpr{"cd", []string{"~"}, 1},
+		"gi": &callExpr{"cd", []string{"/run/media"}, 1},
+		"gt": &callExpr{"cd", []string{"/tmp"}, 1},
 	}
 
 	// insert bindings that apply to both Normal & Visual mode first
