@@ -258,7 +258,7 @@ func main() {
 
 	singleMode := flag.Bool(
 		"single",
-		false,
+		true,
 		"start a client without server")
 
 	printLastDir := flag.Bool(
