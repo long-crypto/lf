@@ -480,10 +480,6 @@ func (win *win) printDir(ui *ui, dir *dir, context *dirContext, dirStyle *dirSty
 
 		// make space for select marker, and leave another space at the end
 		maxWidth := win.w - lnwidth - 2
-		// make extra space to separate windows if drawbox is not enabled
-		if !gOpts.drawbox {
-			maxWidth--
-		}
 
 		var icon []rune
 		var iconDef iconDef
@@ -598,45 +594,23 @@ func getCustomWidth(dir *dir, beg, end int) int {
 	return maxw
 }
 
-func getWidths(wtot int) []int {
-	rsum := 0
-	for _, r := range gOpts.ratios {
-		rsum += r
-	}
-
-	wlen := len(gOpts.ratios)
-	widths := make([]int, wlen)
-
-	if gOpts.drawbox {
-		wtot -= (wlen + 1)
-	}
-
-	wsum := 0
-	for i := range wlen - 1 {
-		widths[i] = gOpts.ratios[i] * wtot / rsum
-		wsum += widths[i]
-	}
-	widths[wlen-1] = wtot - wsum
-
-	return widths
-}
-
 func getWins(screen tcell.Screen) []*win {
 	wtot, htot := screen.Size()
 
-	widths := getWidths(wtot)
+	h := max(htot-2, 0)
+	x := 0
+	y := 1
+	if gOpts.drawbox {
+		h = max(htot-4, 0)
+		x = 1
+		y = 2
+	}
 
-	wacc := 0
-	wlen := len(widths)
-	wins := make([]*win, 0, wlen)
-	for i := range wlen {
-		if gOpts.drawbox {
-			wacc++
-			wins = append(wins, newWin(widths[i], max(htot-4, 0), wacc, 2))
-		} else {
-			wins = append(wins, newWin(widths[i], max(htot-2, 0), wacc, 1))
-		}
-		wacc += widths[i]
+	widths := getWidths(wtot, gOpts.ratios, gOpts.drawbox)
+	wins := make([]*win, 0, len(widths))
+	for _, w := range widths {
+		wins = append(wins, newWin(w, h, x, y))
+		x += w + 1
 	}
 
 	return wins
@@ -695,7 +669,7 @@ func newUI(screen tcell.Screen) *ui {
 		currentFile: "",
 		sxScreen:    sixelScreen{},
 	}
-	ui.ruler, ui.rulerErr = parseRuler()
+	ui.ruler, ui.rulerErr = parseRuler(gOpts.rulerfile)
 
 	go ui.pollEvents()
 
@@ -751,7 +725,7 @@ func (ui *ui) echoerrf(format string, a ...any) {
 	ui.echoerr(fmt.Sprintf(format, a...))
 }
 
-// This represents the preview for a regular file.
+// This represents the preview for a file.
 // This can also be used to represent the preview of a directory if
 // `dirpreviews` is enabled.
 type reg struct {
@@ -1025,16 +999,33 @@ func (ui *ui) drawRulerFile(nav *nav) {
 	curr := nav.currFile()
 	if curr != nil {
 		if curr.err == nil {
+			var dirsize *uint64 = nil
+			var dircount *uint64 = nil
+			if curr.dirSize >= 0 {
+				v := uint64(curr.dirSize)
+				dirsize = &v
+			}
+			if curr.dirCount >= 0 {
+				v := uint64(curr.dirCount)
+				dircount = &v
+			}
 			stat = &statData{
 				Path:        curr.path,
 				Name:        curr.Name(),
+				Extension:   curr.ext,
 				Size:        uint64(curr.Size()),
+				DirSize:     dirsize,
+				DirCount:    dircount,
 				Permissions: permString(curr.Mode()),
 				ModTime:     curr.ModTime().Format(gOpts.timefmt),
+				AccessTime:  curr.accessTime.Format(gOpts.timefmt),
+				BirthTime:   curr.birthTime.Format(gOpts.timefmt),
+				ChangeTime:  curr.changeTime.Format(gOpts.timefmt),
 				LinkCount:   linkCount(curr),
 				User:        userName(curr),
 				Group:       groupName(curr),
 				Target:      curr.linkTarget,
+				CustomInfo:  curr.customInfo,
 			}
 		} else {
 			ui.echoerrf("stat: %s", curr.err)
@@ -1275,7 +1266,7 @@ func (ui *ui) draw(nav *nav) {
 
 	switch ui.cmdPrefix {
 	case "":
-		if gOpts.rulerfile {
+		if gOpts.rulerfmt == "" {
 			ui.drawRulerFile(nav)
 		} else {
 			ui.drawStat(nav)

@@ -155,8 +155,6 @@ func (e *setExpr) eval(app *app, _ []string) {
 		}
 	case "roundbox", "noroundbox", "roundbox!":
 		err = applyBoolOpt(&gOpts.roundbox, e)
-	case "rulerfile", "norulerfile", "rulerfile!":
-		err = applyBoolOpt(&gOpts.rulerfile, e)
 	case "showbinds", "noshowbinds", "showbinds!":
 		err = applyBoolOpt(&gOpts.showbinds, e)
 	case "smartcase", "nosmartcase", "smartcase!":
@@ -336,6 +334,9 @@ func (e *setExpr) eval(app *app, _ []string) {
 		app.ui.wins = getWins(app.ui.screen)
 		app.nav.resize(app.ui)
 		app.ui.loadFile(app, true)
+	case "rulerfile", "norulerfile", "rulerfile!":
+		gOpts.rulerfile = replaceTilde(e.val)
+		app.ui.ruler, app.ui.rulerErr = parseRuler(gOpts.rulerfile)
 	case "rulerfmt":
 		gOpts.rulerfmt = e.val
 	case "scrolloff":
@@ -973,6 +974,7 @@ func exitCompMenu(app *app) {
 func (e *callExpr) eval(app *app, _ []string) {
 	os.Setenv("lf_count", strconv.Itoa(e.count))
 
+	// commands that shouldn't clear the message line
 	silentCmds := []string{
 		"addcustominfo",
 		"clearmaps",
@@ -1569,7 +1571,7 @@ func (e *callExpr) eval(app *app, _ []string) {
 		case 1:
 			k, v = e.args[0], ""
 		case 2:
-			k, v = e.args[0], e.args[1]
+			k, v = e.args[0], e.args[1] // don't trim to allow for custom alignment
 		default:
 			app.ui.echoerr("addcustominfo: requires either 1 or 2 arguments")
 			return
