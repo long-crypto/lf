@@ -164,6 +164,10 @@ func (win *win) renew(w, h, x, y int) {
 	win.w, win.h, win.x, win.y = w, h, x, y
 }
 
+// printLength returns the display width of s in terminal cells.
+//
+// It ignores supported terminal control sequences (see [readTermSequence])
+// and accounts for tab expansions using the `tabstop` option.
 func printLength(s string) int {
 	ind := 0
 	off := 0
@@ -287,25 +291,23 @@ func fileInfo(f *file, d *dir, userWidth, groupWidth, customWidth int) (string, 
 		case "size":
 			if f.IsDir() && getDirCounts(d.path) {
 				switch {
-				case f.dirCount < -1:
-					info.WriteString("     !")
-				case f.dirCount < 0:
+				case f.dirCount == nil:
 					info.WriteString("     ?")
-				case f.dirCount < 10000:
-					fmt.Fprintf(&info, " %5d", f.dirCount)
+				case *f.dirCount < 10000:
+					fmt.Fprintf(&info, " %5d", *f.dirCount)
 				default:
 					info.WriteString(" 9999+")
 				}
-				continue
-			}
-
-			var sz string
-			if f.IsDir() && f.dirSize < 0 {
-				sz = "-"
 			} else {
-				sz = humanize(uint64(f.TotalSize()))
+				switch {
+				case f.dirSize != nil:
+					fmt.Fprintf(&info, " %5s", humanize(*f.dirSize))
+				case f.IsDir():
+					info.WriteString("     -")
+				default:
+					fmt.Fprintf(&info, " %5s", humanize(uint64(f.Size())))
+				}
 			}
-			fmt.Fprintf(&info, " %5s", sz)
 		case "time":
 			fmt.Fprintf(&info, " %*s", max(len(gOpts.infotimefmtnew), len(gOpts.infotimefmtold)), infotimefmt(f.ModTime()))
 		case "atime":
@@ -344,12 +346,13 @@ type dirContext struct {
 	tags       map[string]string
 }
 
+// dirRole describes what kind of directory pane is being drawn.
 type dirRole byte
 
 const (
-	Active dirRole = iota
-	Parent
-	Preview
+	Active  dirRole = iota // Current directory pane.
+	Parent                 // Parent or ancestor directory pane.
+	Preview                // Preview pane when it shows a directory listing.
 )
 
 type dirStyle struct {
@@ -725,9 +728,12 @@ func (ui *ui) echoerrf(format string, a ...any) {
 	ui.echoerr(fmt.Sprintf(format, a...))
 }
 
-// This represents the preview for a file.
+// reg represents the preview for a file.
 // This can also be used to represent the preview of a directory if
 // `dirpreviews` is enabled.
+//
+// Note: the name `reg` is historical. It originally meant "regular"
+// file preview, but `previewer` now also supports non-regular files.
 type reg struct {
 	loading  bool
 	volatile bool
@@ -999,23 +1005,13 @@ func (ui *ui) drawRulerFile(nav *nav) {
 	curr := nav.currFile()
 	if curr != nil {
 		if curr.err == nil {
-			var dirsize *uint64 = nil
-			var dircount *uint64 = nil
-			if curr.dirSize >= 0 {
-				v := uint64(curr.dirSize)
-				dirsize = &v
-			}
-			if curr.dirCount >= 0 {
-				v := uint64(curr.dirCount)
-				dircount = &v
-			}
 			stat = &statData{
 				Path:        curr.path,
 				Name:        curr.Name(),
 				Extension:   curr.ext,
 				Size:        uint64(curr.Size()),
-				DirSize:     dirsize,
-				DirCount:    dircount,
+				DirSize:     curr.dirSize,
+				DirCount:    curr.dirCount,
 				Permissions: permString(curr.Mode()),
 				ModTime:     curr.ModTime().Format(gOpts.timefmt),
 				AccessTime:  curr.accessTime.Format(gOpts.timefmt),
@@ -1540,7 +1536,7 @@ func addSpecialKeyModifier(val string, mod tcell.ModMask) string {
 	}
 }
 
-// This function is used to read a normal event on the client side. For keys,
+// readNormalEvent is used to read a normal event on the client side. For keys,
 // digits are interpreted as command counts but this is only done for digits
 // preceding any non-digit characters (e.g. "42y2k" as 42 times "y2k").
 func (ui *ui) readNormalEvent(ev tcell.Event, nav *nav) expr {

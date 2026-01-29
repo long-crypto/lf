@@ -23,12 +23,13 @@ import (
 	"github.com/djherbis/times"
 )
 
+// A linkState describes whether a file is a symlink and whether its target exists.
 type linkState byte
 
 const (
-	notLink linkState = iota
-	working
-	broken
+	notLink linkState = iota // Not a symbolic link.
+	working                  // Symbolic link with an existing target.
+	broken                   // Symbolic link with a missing target.
 )
 
 type file struct {
@@ -36,14 +37,14 @@ type file struct {
 	linkState   linkState // symlink state
 	linkTarget  string    // path a symlink points to
 	path        string    // full path including the name
-	dirCount    int       // number of items inside the directory (-2: error, -1: unknown)
-	dirSize     int64     // total directory size (needs to be calculated via `calcdirsize`)
+	dirCount    *uint64   // number of items inside the directory
+	dirSize     *uint64   // total directory size (needs to be calculated via `calcdirsize`)
 	accessTime  time.Time // time of last access
 	birthTime   time.Time // time of file birth
 	changeTime  time.Time // time of last status (inode) change
 	customInfo  string    // property defined via `addcustominfo`
 	ext         string    // file extension (including the dot)
-	err         error     // potential error returned by `os.Lstat`
+	err         error     // potential error returned by [os.Lstat]
 }
 
 func newFile(path string) *file {
@@ -53,15 +54,10 @@ func newFile(path string) *file {
 		return &file{
 			FileInfo:   &fakeStat{name: filepath.Base(path)},
 			linkState:  notLink,
-			linkTarget: "",
 			path:       path,
-			dirCount:   -1,
-			dirSize:    -1,
 			accessTime: time.Unix(0, 0),
 			birthTime:  time.Unix(0, 0),
 			changeTime: time.Unix(0, 0),
-			customInfo: "",
-			ext:        "",
 			err:        err,
 		}
 	}
@@ -85,7 +81,7 @@ func newFile(path string) *file {
 
 	ts := times.Get(lstat)
 	at := ts.AccessTime()
-	// from times docs:
+	// from [times.Timespec] docs:
 	// ChangeTime() panics unless HasChangeTime() is true and
 	// BirthTime() panics unless HasBirthTime() is true.
 
@@ -100,19 +96,20 @@ func newFile(path string) *file {
 		ct = ts.ChangeTime()
 	}
 
-	dirCount := -1
+	var dirCount *uint64
 	if lstat.IsDir() && getDirCounts(filepath.Dir(path)) {
 		d, err := os.Open(path)
 		if err != nil {
-			dirCount = -2
+			log.Printf("opening file: %s", err)
 		} else {
 			names, err := d.Readdirnames(10000)
 			d.Close()
 
 			if names == nil && err != io.EOF {
-				dirCount = -2
+				log.Printf("reading directory: %s", err)
 			} else {
-				dirCount = len(names)
+				v := uint64(len(names))
+				dirCount = &v
 			}
 		}
 	}
@@ -123,24 +120,11 @@ func newFile(path string) *file {
 		linkTarget: linkTarget,
 		path:       path,
 		dirCount:   dirCount,
-		dirSize:    -1,
 		accessTime: at,
 		birthTime:  bt,
 		changeTime: ct,
-		customInfo: "",
 		ext:        getFileExtension(lstat),
-		err:        nil,
 	}
-}
-
-func (file *file) TotalSize() int64 {
-	if file.IsDir() {
-		if file.dirSize >= 0 {
-			return file.dirSize
-		}
-		return 0
-	}
-	return file.Size()
 }
 
 func (file *file) isPreviewable() bool {
@@ -291,14 +275,29 @@ func (dir *dir) sort() {
 			return cmp.Compare(normalize(f1.Name()), normalize(f2.Name()))
 		})
 	case sizeSort:
-		sizeVal := func(f *file) int64 {
+		sizeVal := func(f *file) *uint64 {
 			if f.IsDir() && dir.dircounts {
-				return int64(f.dirCount)
+				return f.dirCount
 			}
-			return f.TotalSize()
+			if f.dirSize != nil {
+				return f.dirSize
+			}
+			v := uint64(f.Size())
+			return &v
 		}
 		applySort(func(f1, f2 *file) int {
-			return cmp.Compare(sizeVal(f1), sizeVal(f2))
+			s1 := sizeVal(f1)
+			s2 := sizeVal(f2)
+			switch {
+			case s1 == nil && s2 == nil:
+				return 0
+			case s1 == nil && s2 != nil:
+				return -1
+			case s1 != nil && s2 == nil:
+				return 1
+			default:
+				return cmp.Compare(*s1, *s2)
+			}
 		})
 	case timeSort:
 		applySort(func(f1, f2 *file) int {
@@ -431,11 +430,12 @@ func (dir *dir) boundPos(height int) {
 	dir.pos = max(dir.pos, height-(len(dir.files)-dir.ind))
 }
 
+// clipboardMode controls the clipboard's behavior when pasting.
 type clipboardMode byte
 
 const (
-	clipboardCopy = iota
-	clipboardCut
+	clipboardCopy clipboardMode = iota // Copy on paste.
+	clipboardCut                       // Move on paste.
 )
 
 type clipboard struct {
@@ -708,7 +708,7 @@ func (nav *nav) position() {
 	var path string
 	var base string
 
-	for i := len(nav.dirPaths) - 1; i > 0; i-- {
+	for i := len(nav.dirPaths) - 1; i >= 0; i-- {
 		path = nav.dirPaths[i]
 		if i < len(nav.dirPaths)-1 {
 			nav.getDir(path).sel(base, nav.height)
@@ -2020,7 +2020,8 @@ func (nav *nav) calcDirSize() error {
 			if err != nil {
 				return err
 			}
-			f.dirSize = total
+			v := uint64(total)
+			f.dirSize = &v
 		}
 		return nil
 	}
