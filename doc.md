@@ -236,7 +236,7 @@ The following Command-line mode commands are provided by lf:
 	cmd-home                 (default '<c-a>' and '<home>')
 	cmd-end                  (default '<c-e>' and '<end>')
 	cmd-delete               (default '<c-d>' and '<delete>')
-	cmd-delete-back          (default '<backspace>' and '<backspace2>')
+	cmd-delete-back          (default '<backspace>')
 	cmd-delete-home          (default '<c-u>')
 	cmd-delete-end           (default '<c-k>')
 	cmd-delete-unix-word     (default '<c-w>')
@@ -246,7 +246,7 @@ The following Command-line mode commands are provided by lf:
 	cmd-word                 (default '<a-f>')
 	cmd-word-back            (default '<a-b>')
 	cmd-delete-word          (default '<a-d>')
-	cmd-delete-word-back     (default '<a-backspace>' and '<a-backspace2>')
+	cmd-delete-word-back     (default '<a-backspace>')
 	cmd-capitalize-word      (default '<a-c>')
 	cmd-uppercase-word       (default '<a-u>')
 	cmd-lowercase-word       (default '<a-l>')
@@ -290,6 +290,7 @@ The following options can be used to customize the behavior of lf:
 	mergeindicators   bool      (default false)
 	mouse             bool      (default false)
 	number            bool      (default false)
+	numbercursorfmt   string    (default '')
 	numberfmt         string    (default "\033[33m")
 	period            int       (default 0)
 	preload           bool      (default false)
@@ -793,7 +794,7 @@ Move the cursor to the beginning/end of the line.
 
 Delete the next character.
 
-## cmd-delete-back (default `<backspace>` and `<backspace2>`)
+## cmd-delete-back (default `<backspace>`)
 
 Delete the previous character.
 When at the beginning of a prompt, returns either to Normal mode or to `:` mode.
@@ -810,9 +811,15 @@ Delete the previous Unix word.
 
 Paste the buffer content containing the last deleted item.
 
-## cmd-transpose (default `<c-t>`), cmd-transpose-word (default `<a-t>`)
+## cmd-transpose (default `<c-t>`)
 
-Transpose the positions of the last two characters/words.
+Swap the characters before and after the cursor, then move the cursor forward.
+If there is no character after the cursor, swap the previous two characters instead.
+
+## cmd-transpose-word (default `<a-t>`)
+
+Swap the words before and after the cursor, then move the cursor forward.
+If there is no word after the cursor, swap the previous two words instead.
 
 ## cmd-word (default `<a-f>`), cmd-word-back (default `<a-b>`)
 
@@ -822,7 +829,7 @@ Move the cursor by one word in the forward/backward direction.
 
 Delete the next word in the forward direction.
 
-## cmd-delete-word-back (default `<a-backspace>` and `<a-backspace2>`)
+## cmd-delete-word-back (default `<a-backspace>`)
 
 Delete the previous word in the backward direction.
 
@@ -1027,9 +1034,11 @@ Send mouse events as input.
 Show the position number for directory items on the left side of the pane.
 When the `relativenumber` option is enabled, only the current line shows the absolute position and relative positions are shown for the rest.
 
-## numberfmt (string) (default `\033[33m`)
+## numberfmt (string) (default `\033[33m`), numbercursorfmt (string) (default ``)
 
-Format string of the position number for each line.
+Format strings for highlighting line numbers.
+`numberfmt` applies to all lines.
+`numbercursorfmt` applies to the cursor line and falls back to `numberfmt` when left empty.
 
 ## period (int) (default 0)
 
@@ -1472,7 +1481,6 @@ Command `set` is used to set an option which can be a boolean, integer, or strin
 
 Command `setlocal` is used to set a local option for a directory which can be a boolean or string.
 Currently supported local options are `dircounts`, `dirfirst`, `dironly`, `hidden`, `info`, `reverse` and `sortby`.
-Adding a trailing path separator (i.e. `/` for Unix and `\` for Windows) sets the option for the given directory along with its subdirectories:
 
 	setlocal /foo/bar hidden         # boolean enable
 	setlocal /foo/bar hidden true    # boolean enable
@@ -1482,8 +1490,6 @@ Adding a trailing path separator (i.e. `/` for Unix and `\` for Windows) sets th
 	setlocal /foo/bar sortby time    # string value without quotes
 	setlocal /foo/bar sortby 'time'  # string value with single quotes (whitespace)
 	setlocal /foo/bar sortby "time"  # string value with double quotes (backslash escapes)
-	setlocal /foo/bar  hidden        # for only '/foo/bar' directory
-	setlocal /foo/bar/ hidden        # for '/foo/bar' and its subdirectories (e.g. '/foo/bar/baz')
 
 Command `map` is used to bind a key in Normal and Visual mode to a command which can be a built-in command, custom command, or shell command:
 
@@ -1557,7 +1563,7 @@ Angle brackets can be assigned with their special names:
 	map <lt> down
 	map <gt> down
 
-Function keys are prefixed with `f` character:
+Function keys are prefixed with an `f` character:
 
 	map <f-1> down
 
@@ -1580,6 +1586,17 @@ On these terminals, keys combined with the Alt key are prefixed with an `a` char
 It is possible to combine special keys with modifiers:
 
 	map <a-enter> down
+
+Combining multiple modifiers (e.g. `Ctrl+Shift+Space`) is not supported.
+
+Note that lf's key mapping syntax is similar to Vim's, but not identical.
+Some special keys and modifiers use different names and separators, and key names are matched literally (i.e. no case-folding, no aliases), so some familiar forms will not work:
+
+	map <enter> down  # not <Enter>, <Return> or <CR>
+	map <f-1> down    # not <F1>
+	map <a-j> down    # not <A-j> or <M-j> (Meta)
+	map <m-2> open    # not <RightMouse>
+	map <m-up> down   # not <ScrollWheelUp>
 
 WARNING: Some key combinations will likely be intercepted by your OS, window manager, or terminal.
 Other key combinations cannot be recognized by lf due to the way terminals work (e.g. `Ctrl+h` combination sends a backspace key instead).
@@ -2226,8 +2243,9 @@ The following data fields are exported:
 	.Select           []string            Selection list
 	.Visual           []string            Visual selection
 	.Index            int                 Index of the cursor
-	.Total            int                 Number of visible files in the current directory
-	.Hidden           int                 Number of hidden files in the current directory
+	.Total            int                 Number of visible files in the current working directory
+	.Hidden           int                 Number of hidden files in the current working directory
+	.All              int                 Number of all files in the current working directory
 	.LinePercentage   string              Line percentage (analogous to `%p` for the `statusline` option in Vim)
 	.ScrollPercentage string              Scroll percentage (analogous to `%P` for the `statusline` option in Vim)
 	.Filter           []string            Filter currently being applied
@@ -2237,9 +2255,9 @@ The following data fields are exported:
 	.Stat.Path        string              Path of the current file
 	.Stat.Name        string              Name of the current file
 	.Stat.Extension   string              Extension of the current file
-	.Stat.Size        uint64              Size of the current file
-	.Stat.DirSize     *uint64             Total size of the current directory if calculated via `calcdirsize`
-	.Stat.DirCount    *uint64             Number of items in the current directory if the `dircounts` option is enabled
+	.Stat.Size        int64               Size of the current file
+	.Stat.DirSize     int64               Total size of the current directory if calculated via `calcdirsize` (`-1` if not calculated)
+	.Stat.DirCount    int                 Number of items in the current directory if the `dircounts` option is enabled (`-1` if the directory cannot be read)
 	.Stat.Permissions string              Permissions of the current file
 	.Stat.ModTime     string              Last modified time of the current file (formatted based on the `timefmt` option)
 	.Stat.AccessTime  string              Last access time of the current file (formatted based on the `timefmt` option)
@@ -2255,7 +2273,7 @@ The following functions are exported:
 
 	df       func() string                   Get an indicator representing the amount of free disk space available
 	env      func(string) string             Get the value of an environment variable
-	humanize func(uint64) string             Express a file size in a human-readable format
+	humanize func(int64) string              Express a file size in a human-readable format
 	join     func([]string, string) string   Join a string array by a separator
 	lower    func(string) string             Convert a string to lowercase
 	substr   func(string, int, int) string   Get a substring based on starting index and length

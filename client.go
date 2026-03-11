@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gdamore/tcell/v2"
+	"github.com/gdamore/tcell/v3"
 )
 
 type State struct {
@@ -37,7 +37,7 @@ func run() {
 		log.SetOutput(io.Discard)
 	}
 
-	log.Printf("*************** starting client, PID: %d ***************", os.Getpid())
+	log.Printf("*************** starting client, PID: %d ***************", gClientID)
 
 	var screen tcell.Screen
 	var err error

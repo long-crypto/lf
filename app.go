@@ -268,7 +268,7 @@ func (app *app) loop() {
 		serverChan = readExpr()
 	}
 
-	app.ui.readExpr()
+	go app.ui.readEvents()
 
 	if gConfigPath != "" {
 		if _, err := os.Stat(gConfigPath); !os.IsNotExist(err) {
@@ -296,7 +296,6 @@ func (app *app) loop() {
 		}
 	}
 
-	app.nav.loadDirs()
 	app.nav.addJumpList()
 
 	if gSelect != "" {
@@ -334,7 +333,7 @@ func (app *app) loop() {
 
 			app.nav.previewChan <- ""
 
-			log.Printf("*************** closing client, PID: %d ***************", os.Getpid())
+			log.Printf("*************** closing client, PID: %d ***************", gClientID)
 
 			return
 		case n := <-app.nav.copyJobsChan:
@@ -414,11 +413,17 @@ func (app *app) loop() {
 
 			app.watchDir(d)
 
-			paths := []string{}
-			for _, file := range d.allFiles {
-				paths = append(paths, file.path)
+			// Avoid flickering UI and multiple, unnecessary `on-load` calls
+			// triggered by Git commands executed inside the users `on-load`
+			// command (often used to add git symbols using `addcustominfo`).
+			// TODO: Should `watch` also ignore `.git` directories?
+			if filepath.Base(d.path) != ".git" {
+				paths := make([]string, len(d.allFiles))
+				for i, file := range d.allFiles {
+					paths[i] = file.path
+				}
+				onLoad(app, paths)
 			}
-			onLoad(app, paths)
 
 			if d.path == app.nav.currDir().path {
 				app.nav.preload()
@@ -467,11 +472,15 @@ func (app *app) loop() {
 			}
 
 			deletePathRecursive(app.nav.regCache, path)
-
 			deletePathRecursive(app.nav.dirCache, path)
-			currPath := app.nav.currDir().path
-			if currPath == path || strings.HasPrefix(currPath, path+string(filepath.Separator)) {
-				app.nav.loadDirs()
+
+			for _, dirPath := range app.nav.dirPaths {
+				if dirPath == path {
+					if err := app.nav.cd(filepath.Dir(path)); err != nil {
+						log.Print(err)
+					}
+					break
+				}
 			}
 		case ev := <-app.ui.evChan:
 			e := app.ui.readEvent(ev, app.nav)
@@ -503,7 +512,6 @@ func (app *app) loop() {
 			app.nav.renew()
 			app.ui.loadFile(app, false)
 		case <-app.nav.previewTimer.C:
-			app.nav.previewLoading = true
 			app.ui.draw(app.nav)
 		case <-app.nav.preloadTimer.C:
 			app.nav.preload()
@@ -679,14 +687,14 @@ func (app *app) doComplete() (matches []compMatch) {
 		matches, longest = completeSearch(app.ui.cmdAccLeft)
 	}
 
-	app.ui.cmdAccLeft = []rune(longest)
+	app.ui.cmdAccLeft = longest
 	app.ui.menu, app.ui.menuSelect = listMatches(app.ui.screen, matches, -1)
 	return
 }
 
 func (app *app) menuComplete(direction int) {
 	if !app.menuCompActive {
-		app.menuCompTmp = tokenize(string(app.ui.cmdAccLeft))
+		app.menuCompTmp = tokenize(app.ui.cmdAccLeft)
 		app.menuComps = app.doComplete()
 		if len(app.menuComps) > 1 {
 			app.menuCompInd = -1
@@ -702,7 +710,7 @@ func (app *app) menuComplete(direction int) {
 
 		toks := slices.Clone(app.menuCompTmp)
 		toks[len(toks)-1] = app.menuComps[app.menuCompInd].result
-		app.ui.cmdAccLeft = []rune(strings.Join(toks, " "))
+		app.ui.cmdAccLeft = strings.Join(toks, " ")
 	}
 	app.ui.menu, app.ui.menuSelect = listMatches(app.ui.screen, app.menuComps, app.menuCompInd)
 }

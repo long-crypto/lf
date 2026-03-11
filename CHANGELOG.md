@@ -10,6 +10,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## Unreleased
 
+### Changed
+
+- The key `<backspace2>` has been renamed to `<backspace>` for `map` keybindings (#2286).
+- `.Stat.DirSize` and `.Stat.DirCount` in the ruler file no longer have a pointer type, and will be set to `-1` instead of `nil` if the corresponding value cannot be determined (#2397).
+- `setlocal` commands no longer support the ability to specify recursive directories (#2415). For use cases where `setlocal` should apply to a directory based on some condition, it is recommended to script this inside the `on-load` hook command.
+
+### Added
+
+- Emoji sequences containing Zero Width Joiner characters are now displayed as a single combined glyph (#2286).
+- A new field `.All` is added to the `ruler` file to display the number of all files (i.e. visible + hidden) in the current working directory (#2376).
+- A new option `numbercursorfmt` is added to further customize the appearance of line numbers (#2395).
+- The `loading...` message delay of 100 milliseconds for file previews is now applied to directories as well (#2410).
+- `lf` will now automatically change to the parent directory if the current directory no longer exists and the `watch` option is enabled (#2424).
+
+### Fixed
+
+- Previews are now cleaned when changing to an empty directory (#2369).
+- Previews are now correctly updated on `visual-change` (#2373).
+- The `dircounts` indicator for errors is changed back to `!` instead of `?` (#2372).
+- The `select` command can now select files immediately after creation as part of a script (#2377).
+- The `on-load` hook command now ignores `.git` directories to reduce flicker and repeated `on-load` triggers (#2382).
+- Preview messages like `empty` or `loading...` have their alignment improved (#2400).
+- A bug where the `loading...` message was not displayed for volatile previews after the first time is now fixed (#2410).
+- The `cmd-transpose` command now advances the cursor correctly after swapping characters (#2413).
+- Symbolic links are no longer followed when changing directories (#2423).
+
 ## [r41](https://github.com/gokcehan/lf/releases/tag/r41)
 
 ### Changed
@@ -556,7 +582,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
-- A longstanding issue regarding UI suspend/resume for shell commands in MacOS is now fixed in Tcell.
+- A longstanding issue regarding UI suspend/resume for shell commands in macOS is now fixed in Tcell.
 - Renaming a symlink to its target or a symlink to another with the same target should now be handled properly (#581).
 - Autocompletion in a directory containing a broken symlink should now work as intended (#581).
 - Setting `shellopts` to empty in the configuration file should not pass an extra empty argument to shell commands anymore.

@@ -312,34 +312,6 @@ func matchShellFile(s string) (matches []compMatch, longest string) {
 	return
 }
 
-func matchSetlocalDir(s string) (matches []compMatch, longest string) {
-	matches, longest = matchFile(s, true, cmdEscape, cmdUnescape)
-	if len(matches) == 0 {
-		return
-	}
-
-	trimSep := func(path string) string {
-		return strings.TrimSuffix(path, string(filepath.Separator))
-	}
-
-	trimSepEsc := func(path string) string {
-		return cmdEscape(trimSep(cmdUnescape(path)))
-	}
-
-	// add separate matches for path and recursive path
-	tmp := make([]compMatch, 0, len(matches)*2)
-	for _, match := range matches {
-		trimmedMatch := compMatch{trimSep(match.name), trimSepEsc(match.result)}
-		tmp = append(tmp, trimmedMatch, match)
-	}
-	matches = tmp
-
-	if longest != s {
-		longest = trimSepEsc(longest)
-	}
-	return
-}
-
 func matchExec(s string) (matches []compMatch, longest string) {
 	var words []string
 	for p := range strings.SplitSeq(envPath, string(filepath.ListSeparator)) {
@@ -401,8 +373,7 @@ func matchSearch(s string) (matches []compMatch, longest string) {
 	return
 }
 
-func completeCmd(acc []rune) (matches []compMatch, longest string) {
-	s := string(acc)
+func completeCmd(s string) (matches []compMatch, longest string) {
 	f := tokenize(s)
 
 	if len(f) == 1 {
@@ -443,7 +414,7 @@ func completeCmd(acc []rune) (matches []compMatch, longest string) {
 		}
 	case "setlocal":
 		if len(f) == 2 {
-			matches, longest = matchSetlocalDir(f[1])
+			matches, longest = matchCmdFile(f[1], true)
 			break
 		}
 		if len(f) == 3 {
@@ -489,8 +460,8 @@ func completeCmd(acc []rune) (matches []compMatch, longest string) {
 	return
 }
 
-func completeShell(acc []rune) (matches []compMatch, longest string) {
-	f := tokenize(string(acc))
+func completeShell(s string) (matches []compMatch, longest string) {
+	f := tokenize(s)
 
 	switch len(f) {
 	case 1:
@@ -504,7 +475,7 @@ func completeShell(acc []rune) (matches []compMatch, longest string) {
 	return
 }
 
-func completeSearch(acc []rune) (matches []compMatch, longest string) {
-	matches, longest = matchSearch(string(acc))
+func completeSearch(s string) (matches []compMatch, longest string) {
+	matches, longest = matchSearch(s)
 	return
 }
