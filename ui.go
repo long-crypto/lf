@@ -2,13 +2,14 @@ package main
 
 import (
 	"bytes"
+	"cmp"
 	"fmt"
 	"log"
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -35,6 +36,12 @@ func (win *win) renew(w, h, x, y int) {
 	win.w, win.h, win.x, win.y = w, h, x, y
 }
 
+// isPrintable reports whether sequence is safe to display.
+// It rejects C0 control characters (0x00-0x1F) and DEL (0x7F).
+func isPrintable(gc string) bool {
+	return gc[0] >= 0x20 && gc[0] != 0x7F
+}
+
 // printLength returns the display width of s in terminal cells.
 //
 // It ignores supported terminal control sequences (see [readTermSequence])
@@ -42,9 +49,8 @@ func (win *win) renew(w, h, x, y int) {
 func printLength(s string) int {
 	length := 0
 
-	i := 0
 	slen := len(s)
-	for i < slen {
+	for i := 0; i < slen; {
 		seq := readTermSequence(s[i:])
 		if seq != "" {
 			i += len(seq)
@@ -56,7 +62,7 @@ func printLength(s string) int {
 
 		if gc == "\t" {
 			length += gOpts.tabstop - length%gOpts.tabstop
-		} else {
+		} else if isPrintable(gc) {
 			length += w
 		}
 	}
@@ -76,9 +82,8 @@ func (win *win) print(screen tcell.Screen, x, y int, st tcell.Style, s string) t
 		}
 	}
 
-	i := 0
 	slen := len(s)
-	for i < slen {
+	for i := 0; i < slen; {
 		seq := readTermSequence(s[i:])
 		if seq != "" {
 			put()
@@ -91,7 +96,7 @@ func (win *win) print(screen tcell.Screen, x, y int, st tcell.Style, s string) t
 		if gc == "\t" {
 			w := gOpts.tabstop - (x+off+printLength(b.String()))%gOpts.tabstop
 			b.WriteString(strings.Repeat(" ", w))
-		} else if gc != "\r" && gc != "\n" {
+		} else if isPrintable(gc) {
 			b.WriteString(gc)
 		}
 
@@ -482,15 +487,13 @@ func getWins(screen tcell.Screen) []*win {
 	wtot, htot := screen.Size()
 
 	h := max(htot-2, 0)
-	x := 0
-	y := 1
-	if gOpts.drawbox {
+	x, y := 0, 1
+	if gOpts.drawbox && gOpts.borderstyle&borderOutline != 0 {
 		h = max(htot-4, 0)
-		x = 1
-		y = 2
+		x, y = 1, 2
 	}
 
-	widths := getWidths(wtot, gOpts.ratios, gOpts.drawbox)
+	widths := getWidths(wtot, gOpts.ratios, gOpts.drawbox, gOpts.borderstyle)
 	wins := make([]*win, 0, len(widths))
 	for _, w := range widths {
 		wins = append(wins, newWin(w, h, x, y))
@@ -949,9 +952,9 @@ func (ui *ui) drawRulerFile(nav *nav) {
 		mode = "VISUAL"
 	}
 
-	options := make(map[string]string)
 	v := reflect.ValueOf(gOpts)
 	t := v.Type()
+	options := make(map[string]string, v.NumField())
 	for i := range v.NumField() {
 		name := t.Field(i).Name
 		switch name {
@@ -1022,37 +1025,52 @@ func (ui *ui) drawBox() {
 	st := parseEscapeSequence(gOpts.borderfmt)
 
 	w, h := ui.screen.Size()
+	style := gOpts.borderstyle
 
-	for i := 1; i < w-1; i++ {
-		ui.screen.PutStrStyled(i, 1, string(tcell.RuneHLine), st)
-		ui.screen.PutStrStyled(i, h-2, string(tcell.RuneHLine), st)
-	}
-
-	for i := 2; i < h-2; i++ {
-		ui.screen.PutStrStyled(0, i, string(tcell.RuneVLine), st)
-		ui.screen.PutStrStyled(w-1, i, string(tcell.RuneVLine), st)
-	}
-
-	if gOpts.roundbox {
-		ui.screen.PutStrStyled(0, 1, "╭", st)
-		ui.screen.PutStrStyled(w-1, 1, "╮", st)
-		ui.screen.PutStrStyled(0, h-2, "╰", st)
-		ui.screen.PutStrStyled(w-1, h-2, "╯", st)
-	} else {
-		ui.screen.PutStrStyled(0, 1, string(tcell.RuneULCorner), st)
-		ui.screen.PutStrStyled(w-1, 1, string(tcell.RuneURCorner), st)
-		ui.screen.PutStrStyled(0, h-2, string(tcell.RuneLLCorner), st)
-		ui.screen.PutStrStyled(w-1, h-2, string(tcell.RuneLRCorner), st)
-	}
-
-	wacc := 0
-	for wind := range len(ui.wins) - 1 {
-		wacc += ui.wins[wind].w + 1
-		ui.screen.PutStrStyled(wacc, 1, string(tcell.RuneTTee), st)
-		for i := 2; i < h-2; i++ {
-			ui.screen.PutStrStyled(wacc, i, string(tcell.RuneVLine), st)
+	if style&borderOutline != 0 {
+		for i := 1; i < w-1; i++ {
+			ui.screen.PutStrStyled(i, 1, string(tcell.RuneHLine), st)
+			ui.screen.PutStrStyled(i, h-2, string(tcell.RuneHLine), st)
 		}
-		ui.screen.PutStrStyled(wacc, h-2, string(tcell.RuneBTee), st)
+
+		for i := 2; i < h-2; i++ {
+			ui.screen.PutStrStyled(0, i, string(tcell.RuneVLine), st)
+			ui.screen.PutStrStyled(w-1, i, string(tcell.RuneVLine), st)
+		}
+
+		if style&borderRound != 0 {
+			ui.screen.PutStrStyled(0, 1, "╭", st)
+			ui.screen.PutStrStyled(w-1, 1, "╮", st)
+			ui.screen.PutStrStyled(0, h-2, "╰", st)
+			ui.screen.PutStrStyled(w-1, h-2, "╯", st)
+		} else {
+			ui.screen.PutStrStyled(0, 1, string(tcell.RuneULCorner), st)
+			ui.screen.PutStrStyled(w-1, 1, string(tcell.RuneURCorner), st)
+			ui.screen.PutStrStyled(0, h-2, string(tcell.RuneLLCorner), st)
+			ui.screen.PutStrStyled(w-1, h-2, string(tcell.RuneLRCorner), st)
+		}
+	}
+
+	if style&borderSeparators == 0 {
+		return
+	}
+
+	top, bot := 1, h-1
+	if style&borderOutline != 0 {
+		top, bot = 2, h-2
+	}
+
+	for wind := range len(ui.wins) - 1 {
+		x := ui.wins[wind].x + ui.wins[wind].w
+		if style&borderOutline != 0 {
+			ui.screen.PutStrStyled(x, 1, string(tcell.RuneTTee), st)
+		}
+		for y := top; y < bot; y++ {
+			ui.screen.PutStrStyled(x, y, string(tcell.RuneVLine), st)
+		}
+		if style&borderOutline != 0 {
+			ui.screen.PutStrStyled(x, h-2, string(tcell.RuneBTee), st)
+		}
 	}
 }
 
@@ -1158,7 +1176,7 @@ func (ui *ui) draw(nav *nav) {
 	ui.screen.Show()
 }
 
-func findBinds(keys map[string]expr, prefix string) (binds map[string]expr, ok bool) {
+func findBinds(keys map[string]expr, prefix string) (binds map[string]expr, exact bool) {
 	binds = make(map[string]expr)
 	for key, expr := range keys {
 		if !strings.HasPrefix(key, prefix) {
@@ -1166,10 +1184,10 @@ func findBinds(keys map[string]expr, prefix string) (binds map[string]expr, ok b
 		}
 		binds[key] = expr
 		if key == prefix {
-			ok = true
+			exact = true
 		}
 	}
-	return
+	return binds, exact
 }
 
 func listBinds(binds map[string]map[string]expr) string {
@@ -1201,11 +1219,11 @@ func listBinds(binds map[string]map[string]expr) string {
 		}
 	}
 
-	sort.Slice(entries, func(i, j int) bool {
-		if entries[i].key != entries[j].key {
-			return entries[i].key < entries[j].key
+	slices.SortFunc(entries, func(a, b entry) int {
+		if c := cmp.Compare(a.key, b.key); c != 0 {
+			return c
 		}
-		return entries[i].mode < entries[j].mode
+		return cmp.Compare(a.mode, b.mode)
 	})
 
 	t.Init(b, 0, gOpts.tabstop, 2, '\t', 0)
@@ -1222,15 +1240,9 @@ func listMatchingBinds(binds map[string]expr, prefix string) string {
 	t := new(tabwriter.Writer)
 	b := new(bytes.Buffer)
 
-	keys := make([]string, 0, len(binds))
-	for k := range binds {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-
 	t.Init(b, 0, gOpts.tabstop, 2, '\t', 0)
 	fmt.Fprintln(t, "key\tcommand")
-	for _, k := range keys {
+	for _, k := range slices.Sorted(maps.Keys(binds)) {
 		remain, _ := strings.CutPrefix(k, prefix)
 		fmt.Fprintf(t, "%s\t%v\n", remain, binds[k])
 	}
@@ -1243,15 +1255,9 @@ func listCmds(cmds map[string]expr) string {
 	t := new(tabwriter.Writer)
 	b := new(bytes.Buffer)
 
-	keys := make([]string, 0, len(cmds))
-	for k := range cmds {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-
 	t.Init(b, 0, gOpts.tabstop, 2, '\t', 0)
 	fmt.Fprintln(t, "name\tcommand")
-	for _, k := range keys {
+	for _, k := range slices.Sorted(maps.Keys(cmds)) {
 		fmt.Fprintf(t, "%s\t%v\n", k, cmds[k])
 	}
 	t.Flush()
@@ -1303,15 +1309,9 @@ func listMarks(marks map[string]string) string {
 	t := new(tabwriter.Writer)
 	b := new(bytes.Buffer)
 
-	keys := make([]string, 0, len(marks))
-	for k := range marks {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-
 	t.Init(b, 0, gOpts.tabstop, 2, '\t', 0)
 	fmt.Fprintln(t, "mark\tpath")
-	for _, k := range keys {
+	for _, k := range slices.Sorted(maps.Keys(marks)) {
 		fmt.Fprintf(t, "%s\t%s\n", k, marks[k])
 	}
 	t.Flush()
@@ -1339,7 +1339,6 @@ func listFilesInCurrDir(nav *nav) string {
 // preceding any non-digit characters (e.g. "42y2k" as 42 times "y2k").
 func (ui *ui) readNormalEvent(ev tcell.Event, nav *nav) expr {
 	draw := &callExpr{"draw", nil, 1}
-	count := 0
 
 	keys := gOpts.nkeys
 	if nav.isVisualMode() {
@@ -1374,46 +1373,41 @@ func (ui *ui) readNormalEvent(ev tcell.Event, nav *nav) expr {
 			ui.keyAcc += readKey(tev)
 		}
 
-		binds, ok := findBinds(keys, ui.keyAcc)
-
-		switch len(binds) {
-		case 0:
+		binds, exact := findBinds(keys, ui.keyAcc)
+		if len(binds) == 0 {
 			ui.echoerrf("unknown mapping: %s", ui.keyAcc)
 			ui.keyAcc = ""
 			ui.keyCount = ""
 			ui.menu = ""
 			return draw
-		default:
-			if ok {
-				if ui.keyCount != "" {
-					c, err := strconv.Atoi(ui.keyCount)
-					if err != nil {
-						log.Printf("converting command count: %s", err)
-					}
-					count = c
-				}
-				expr := keys[ui.keyAcc]
-
-				if count != 0 {
-					switch e := expr.(type) {
-					case *callExpr:
-						expr = &callExpr{name: e.name, args: e.args, count: count}
-					case *listExpr:
-						expr = &listExpr{exprs: e.exprs, count: count}
-					}
-				}
-
-				ui.keyAcc = ""
-				ui.keyCount = ""
-				ui.menu = ""
-				return expr
-			}
+		}
+		if !exact {
 			if gOpts.showbinds {
 				// mode and already typed keys are obvious here; no need to clutter the menu
 				ui.menu = listMatchingBinds(binds, ui.keyAcc)
 			}
 			return draw
 		}
+
+		expr := keys[ui.keyAcc]
+		if ui.keyCount != "" {
+			if count, err := strconv.Atoi(ui.keyCount); err != nil {
+				log.Printf("converting command count: %s", err)
+			} else if count > 0 {
+				switch e := expr.(type) {
+				case *callExpr:
+					expr = &callExpr{name: e.name, args: e.args, count: count}
+				case *listExpr:
+					expr = &listExpr{exprs: e.exprs, count: count}
+				}
+			}
+		}
+
+		ui.keyAcc = ""
+		ui.keyCount = ""
+		ui.menu = ""
+		return expr
+
 	case *tcell.EventMouse:
 		if ui.cmdPrefix != "" {
 			return nil

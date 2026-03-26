@@ -12,10 +12,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"reflect"
 	"regexp"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -547,7 +545,7 @@ func (nav *nav) checkDir(dir *dir) {
 		dir.dironly != getDirOnly(dir.path) ||
 		dir.hidden != getHidden(dir.path) ||
 		dir.reverse != getReverse(dir.path) ||
-		!reflect.DeepEqual(dir.hiddenfiles, gOpts.hiddenfiles) ||
+		!slices.Equal(dir.hiddenfiles, gOpts.hiddenfiles) ||
 		dir.ignorecase != gOpts.ignorecase ||
 		dir.ignoredia != gOpts.ignoredia:
 		dir.loading = true
@@ -690,11 +688,10 @@ func (nav *nav) resize(ui *ui) {
 }
 
 func (nav *nav) position() {
-	var path string
 	var base string
 
 	for i := len(nav.dirPaths) - 1; i >= 0; i-- {
-		path = nav.dirPaths[i]
+		path := nav.dirPaths[i]
 		if i < len(nav.dirPaths)-1 {
 			nav.getDir(path).sel(base, nav.height)
 		}
@@ -937,6 +934,17 @@ func (nav *nav) preview(path string, win *win, mode string) {
 	if binary {
 		lines = []string{"\033[7mbinary\033[0m"}
 	}
+
+	// The internal previewer reads raw file content which may contain
+	// escape sequences that corrupt the display or enable code execution
+	// (e.g. OSC 52 clipboard writes). Strip all control characters.
+	if len(gOpts.previewer) == 0 && !binary {
+		sixel = false
+		for i, l := range lines {
+			lines[i] = stripAllSequences(l)
+		}
+	}
+
 	reg.lines = lines
 	reg.sixel = sixel
 }
@@ -1848,15 +1856,10 @@ func (nav *nav) writeMarks() error {
 	}
 	defer f.Close()
 
-	var keys []string
-	for k := range nav.marks {
-		if !strings.Contains(gOpts.tempmarks, k) {
-			keys = append(keys, k)
+	for _, k := range slices.Sorted(maps.Keys(nav.marks)) {
+		if strings.Contains(gOpts.tempmarks, k) {
+			continue
 		}
-	}
-	sort.Strings(keys)
-
-	for _, k := range keys {
 		_, err = fmt.Fprintf(f, "%s:%s\n", k, nav.marks[k])
 		if err != nil {
 			return fmt.Errorf("writing marks file: %w", err)
@@ -1911,13 +1914,7 @@ func (nav *nav) writeTags() error {
 	}
 	defer f.Close()
 
-	var keys []string
-	for k := range nav.tags {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-
-	for _, k := range keys {
+	for _, k := range slices.Sorted(maps.Keys(nav.tags)) {
 		_, err = fmt.Fprintf(f, "%s:%s\n", k, nav.tags[k])
 		if err != nil {
 			return fmt.Errorf("writing tags file: %w", err)
@@ -1950,20 +1947,6 @@ func (nav *nav) currFile() *file {
 	return dir.files[dir.ind]
 }
 
-type indexedSelections struct {
-	paths   []string
-	indices []int
-}
-
-func (m indexedSelections) Len() int { return len(m.paths) }
-
-func (m indexedSelections) Swap(i, j int) {
-	m.paths[i], m.paths[j] = m.paths[j], m.paths[i]
-	m.indices[i], m.indices[j] = m.indices[j], m.indices[i]
-}
-
-func (m indexedSelections) Less(i, j int) bool { return m.indices[i] < m.indices[j] }
-
 func (nav *nav) currSelections() []string {
 	currDirOnly := gOpts.selmode == "dir"
 	currDirPath := ""
@@ -1973,18 +1956,18 @@ func (nav *nav) currSelections() []string {
 	}
 
 	paths := make([]string, 0, len(nav.selections))
-	indices := make([]int, 0, len(nav.selections))
-	for path, index := range nav.selections {
+	for path := range nav.selections {
 		if !currDirOnly || filepath.Dir(path) == currDirPath {
 			paths = append(paths, path)
-			indices = append(indices, index)
 		}
 	}
-	sort.Sort(indexedSelections{paths: paths, indices: indices})
+	slices.SortFunc(paths, func(a, b string) int {
+		return cmp.Compare(nav.selections[a], nav.selections[b])
+	})
 	return paths
 }
 
-func (nav *nav) currFileOrSelections() (list []string, err error) {
+func (nav *nav) currFileOrSelections() ([]string, error) {
 	if sel := nav.currSelections(); len(sel) > 0 {
 		return sel, nil
 	}

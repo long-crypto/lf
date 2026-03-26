@@ -464,78 +464,96 @@ func deletePathRecursive[T any](m map[string]T, path string) {
 // readLines reads lines from a file to be displayed as a preview.
 // The number of lines to read is capped since files can be very large.
 // Lines are split on `\n` characters, and `\r` characters are discarded.
+// Individual lines are truncated to avoid unbounded memory usage on files
+// with very long or no newlines.
 // Sixel images are also detected and stored as separate lines.
 // The presence of a null byte outside a sixel image indicates a binary file.
 func readLines(reader io.ByteReader, maxLines int) (lines []string, binary bool, sixel bool) {
-	var buf bytes.Buffer
-	var last byte
-	inSixel := false
+	const maxLineBytes = 1 << 16 // 64 KiB per line
 
-	for {
+	type state int
+	const (
+		stateNormal state = iota
+		stateEsc
+		stateSixel
+		stateSixelEsc
+	)
+	currState := stateNormal
+
+	var buf bytes.Buffer
+	maxLinesReached := false
+	flush := func(force bool) {
+		if buf.Len() > 0 || force {
+			lines = append(lines, buf.String())
+		}
+		buf.Reset()
+		if len(lines) >= maxLines {
+			maxLinesReached = true
+		}
+	}
+
+	for !maxLinesReached {
 		b, err := reader.ReadByte()
 		if err != nil {
-			if buf.Len() > 0 {
-				lines = append(lines, buf.String())
-			}
+			flush(false)
 			return
 		}
 
-		if inSixel {
-			buf.WriteByte(b)
-			if b == '\\' && last == '\033' {
-				lines = append(lines, buf.String())
-				buf.Reset()
-				if len(lines) >= maxLines {
-					return
-				}
-				inSixel = false
-			}
-		} else {
-			switch {
-			case b == 0:
+		switch currState {
+		case stateNormal:
+			switch b {
+			case 0:
 				return nil, true, false
-			case b == '\033':
-				// withhold as it could be the start of a sixel image
-			case b == 'P' && last == '\033':
-				if buf.Len() > 0 {
-					lines = append(lines, buf.String())
-					buf.Reset()
-					if len(lines) >= maxLines {
-						return
-					}
-				}
-				buf.WriteByte(last)
-				buf.WriteByte(b)
-				inSixel = true
-				sixel = true
-			case last == '\033':
-				// not a sixel image
-				buf.WriteByte(last)
-				buf.WriteByte(b)
-			case b == '\r':
-			case b == '\n':
-				lines = append(lines, buf.String())
-				buf.Reset()
-				if len(lines) >= maxLines {
-					return
-				}
+			case '\033':
+				currState = stateEsc
+			case '\r':
+				// filter out carriage return
+			case '\n':
+				flush(true)
 			default:
+				if buf.Len() >= maxLineBytes {
+					flush(true)
+				}
 				buf.WriteByte(b)
+			}
+		case stateEsc:
+			if b == 'P' {
+				flush(false)
+				buf.WriteString("\033P")
+				currState = stateSixel
+			} else {
+				buf.WriteByte('\033')
+				buf.WriteByte(b)
+				currState = stateNormal
+			}
+		case stateSixel:
+			buf.WriteByte(b)
+			if b == '\033' {
+				currState = stateSixelEsc
+			}
+		case stateSixelEsc:
+			buf.WriteByte(b)
+			if b == '\\' {
+				flush(true)
+				sixel = true
+				currState = stateNormal
+			} else {
+				currState = stateSixel
 			}
 		}
-
-		last = b
 	}
+
+	return
 }
 
 // getWidths calculates the widths of windows as the result of applying the
 // `ratios` option to the screen width. One column is allocated for each divider
-// between windows. The `drawbox` option requires an additional two columns to
-// draw the left and right borders.
-func getWidths(wtot int, ratios []int, drawbox bool) []int {
+// between windows. When `drawbox` is enabled and `borderstyle` includes an outline,
+// getWidths reserves two additional columns for the left and right borders.
+func getWidths(wtot int, ratios []int, drawbox bool, borderstyle borderStyle) []int {
 	rlen := len(ratios)
 	wtot -= rlen - 1
-	if drawbox {
+	if drawbox && borderstyle&borderOutline != 0 {
 		wtot -= 2
 	}
 	wtot = max(wtot, 0)

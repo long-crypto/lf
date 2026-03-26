@@ -23,15 +23,15 @@ const gEscapeCode byte = '\x1b'
 func stripTermSequence(s string) string {
 	var b strings.Builder
 	slen := len(s)
-	for i := 0; i < slen; i++ {
+	for i := 0; i < slen; {
 		seq := readTermSequence(s[i:])
 		if seq != "" {
-			i += len(seq) - 1 // skip known sequence
+			i += len(seq) // skip known sequence
 			continue
 		}
 
 		r, w := utf8.DecodeRuneInString(s[i:])
-		i += w - 1
+		i += w
 		b.WriteRune(r)
 	}
 
@@ -57,11 +57,17 @@ func readTermSequence(s string) string {
 
 	switch s[1] {
 	case '[': // CSI
-		i := strings.IndexAny(s[:min(slen, 64)], "mK")
-		if i == -1 {
-			return ""
+		// Find the final byte (0x40-0x7E per ECMA-48), then check
+		// if it indicates a sequence we support (SGR or EL).
+		for i := 2; i < min(slen, 64); i++ {
+			if s[i] >= 0x40 && s[i] <= 0x7E {
+				if s[i] == 'm' || s[i] == 'K' {
+					return s[:i+1]
+				}
+				return ""
+			}
 		}
-		return s[:i+1]
+		return ""
 	case ']': // OSC
 		if slen < 4 || s[2] != '8' || s[3] != ';' {
 			return ""
@@ -269,4 +275,16 @@ func applyOSC(body string, st tcell.Style) tcell.Style {
 	default:
 		return st
 	}
+}
+
+// stripAllSequences removes all control characters from a string, keeping
+// only printable characters and tabs. This is used to
+// sanitize raw file content for the internal previewer.
+func stripAllSequences(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r >= 0x20 && r != 0x7F || r == '\t' {
+			return r
+		}
+		return -1
+	}, s)
 }
