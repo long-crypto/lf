@@ -15,6 +15,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - The key `<backspace2>` has been renamed to `<backspace>` for `map` keybindings (#2286).
 - `.Stat.DirSize` and `.Stat.DirCount` in the ruler file no longer have a pointer type, and will be set to `-1` instead of `nil` if the corresponding value cannot be determined (#2397).
 - `setlocal` commands no longer support the ability to specify recursive directories (#2415). For use cases where `setlocal` should apply to a directory based on some condition, it is recommended to script this inside the `on-load` hook command.
+- The `rulerfmt` and `statfmt` options are now marked as deprecated in favor of using the ruler file (configured using the `rulerfile` option), and will be removed in a future release (#2477).
 
 ### Added
 
@@ -41,6 +42,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Executable files on Windows are now correctly recognized for icon and color lookup based on `PATHEXT` (#2448).
 - The number of bytes read is now limited for previews that contain extremely long lines (#2458).
 - Control characters are now stripped from previews to prevent dangerous terminal sequences from being processed if the default previewer is used (#2459).
+- Sixel images with the same height as the preview window are now displayed correctly when using `tmux` (#2474).
 
 ## [r41](https://github.com/gokcehan/lf/releases/tag/r41)
 
