@@ -17,8 +17,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/clipperhouse/displaywidth"
 	"github.com/gdamore/tcell/v3"
-	"github.com/rivo/uniseg"
 	"golang.org/x/term"
 )
 
@@ -36,10 +36,23 @@ func (win *win) renew(w, h, x, y int) {
 	win.w, win.h, win.x, win.y = w, h, x, y
 }
 
-// isPrintable reports whether sequence is safe to display.
-// It rejects C0 control characters (0x00-0x1F) and DEL (0x7F).
+// isPrintable reports whether a grapheme cluster is safe to display.
+// It rejects C0/C1 controls, DEL, and invalid UTF-8.
 func isPrintable(gc string) bool {
-	return gc[0] >= 0x20 && gc[0] != 0x7F
+	r, size := utf8.DecodeRuneInString(gc)
+	if r == utf8.RuneError && size <= 1 {
+		return false
+	}
+	return !isControlChar(r)
+}
+
+// firstGrapheme returns the first grapheme cluster in s and its display width.
+func firstGrapheme(s string) (string, int) {
+	gr := displaywidth.StringGraphemes(s)
+	if !gr.Next() {
+		return "", 0
+	}
+	return gr.Value(), gr.Width()
 }
 
 // printLength returns the display width of s in terminal cells.
@@ -57,13 +70,15 @@ func printLength(s string) int {
 			continue
 		}
 
-		gc, _, w, _ := uniseg.FirstGraphemeClusterInString(s[i:], -1)
+		gc, w := firstGrapheme(s[i:])
 		i += len(gc)
 
 		if gc == "\t" {
 			length += gOpts.tabstop - length%gOpts.tabstop
 		} else if isPrintable(gc) {
 			length += w
+		} else {
+			length++ // U+FFFD replacement has width 1
 		}
 	}
 
@@ -92,12 +107,14 @@ func (win *win) print(screen tcell.Screen, x, y int, st tcell.Style, s string) t
 			continue
 		}
 
-		gc, _, _, _ := uniseg.FirstGraphemeClusterInString(s[i:], -1)
+		gc := firstGraphemeCluster(s[i:])
 		if gc == "\t" {
 			w := gOpts.tabstop - (x+off+printLength(b.String()))%gOpts.tabstop
 			b.WriteString(strings.Repeat(" ", w))
 		} else if isPrintable(gc) {
 			b.WriteString(gc)
+		} else {
+			b.WriteString("\uFFFD")
 		}
 
 		i += len(gc)
@@ -379,7 +396,7 @@ func (win *win) printDir(ui *ui, dir *dir, context *dirContext, dirStyle *dirSty
 		}
 
 		// subtract space for icon
-		maxFilenameWidth := maxWidth - uniseg.StringWidth(icon)
+		maxFilenameWidth := maxWidth - displaywidth.String(icon)
 		// subtract space for tag if not merged with selection marker
 		if !gOpts.mergeindicators {
 			maxFilenameWidth--
@@ -393,14 +410,14 @@ func (win *win) printDir(ui *ui, dir *dir, context *dirContext, dirStyle *dirSty
 		}
 
 		filename := truncateFilename(f, maxFilenameWidth, gOpts.truncatepct, gOpts.truncatechar)
-		spacing := maxFilenameWidth - uniseg.StringWidth(filename)
+		spacing := maxFilenameWidth - displaywidth.String(filename)
 		if spacing > 0 {
 			filename += strings.Repeat(" ", spacing)
 		}
 
 		if showInfo {
 			filename += info
-			customOff += nameOff + uniseg.StringWidth(icon) + maxFilenameWidth
+			customOff += nameOff + displaywidth.String(icon) + maxFilenameWidth
 		}
 
 		if i == dir.pos {
@@ -443,7 +460,7 @@ func (win *win) printDir(ui *ui, dir *dir, context *dirContext, dirStyle *dirSty
 				win.print(ui.screen, nameOff, i, iconStyle, icon)
 			}
 
-			win.print(ui.screen, nameOff+uniseg.StringWidth(icon), i, st, filename+" ")
+			win.print(ui.screen, nameOff+displaywidth.String(icon), i, st, filename+" ")
 
 			// print over the empty space we reserved for the custom info
 			if showInfo && custom != "" {
@@ -638,7 +655,7 @@ func (ui *ui) drawPromptLine(nav *nav) {
 	st := tcell.StyleDefault
 
 	dir := nav.currDir()
-	pwd := dir.path
+	pwd := sanitizeName(dir.path)
 
 	if after, ok := strings.CutPrefix(pwd, gUser.HomeDir); ok {
 		pwd = filepath.Join("~", after)
@@ -648,7 +665,7 @@ func (ui *ui) drawPromptLine(nav *nav) {
 
 	var fname string
 	if curr := nav.currFile(); curr != nil {
-		fname = filepath.Base(curr.path)
+		fname = sanitizeName(filepath.Base(curr.path))
 	}
 
 	var prompt string
@@ -746,7 +763,7 @@ func (ui *ui) drawStat(nav *nav) {
 	replace("%s", humanize(curr.Size()))
 	replace("%S", fmt.Sprintf("%5s", humanize(curr.Size())))
 	replace("%t", curr.ModTime().Format(gOpts.timefmt))
-	replace("%l", curr.linkTarget)
+	replace("%l", sanitizeName(curr.linkTarget))
 
 	var fileInfo strings.Builder
 	for section := range strings.SplitSeq(statfmt, "\x1f") {
@@ -882,9 +899,9 @@ func (ui *ui) drawRulerFile(nav *nav) {
 	if curr != nil {
 		if curr.err == nil {
 			stat = &statData{
-				Path:        curr.path,
-				Name:        curr.Name(),
-				Extension:   curr.ext,
+				Path:        sanitizeName(curr.path),
+				Name:        sanitizeName(curr.Name()),
+				Extension:   sanitizeName(curr.ext),
 				Size:        curr.Size(),
 				DirSize:     curr.dirSize,
 				DirCount:    curr.dirCount,
@@ -896,7 +913,7 @@ func (ui *ui) drawRulerFile(nav *nav) {
 				LinkCount:   linkCount(curr),
 				User:        userName(curr),
 				Group:       groupName(curr),
-				Target:      curr.linkTarget,
+				Target:      sanitizeName(curr.linkTarget),
 				CustomInfo:  curr.customInfo,
 			}
 		} else {
@@ -1165,16 +1182,16 @@ func (ui *ui) draw(nav *nav) {
 	case ">":
 		maxWidth := ui.msgWin.w - 1 // leave space for cursor at the end
 		prefix := truncateRight(ui.cmdPrefix, maxWidth)
-		left := truncateLeft(ui.cmdAccLeft, maxWidth-uniseg.StringWidth(prefix)-printLength(ui.msg))
+		left := truncateLeft(ui.cmdAccLeft, maxWidth-displaywidth.String(prefix)-printLength(ui.msg))
 		ui.msgWin.printLine(ui.screen, 0, 0, st, prefix+ui.msg)
-		ui.msgWin.print(ui.screen, uniseg.StringWidth(prefix)+printLength(ui.msg), 0, st, left+ui.cmdAccRight)
-		ui.screen.ShowCursor(ui.msgWin.x+uniseg.StringWidth(prefix)+printLength(ui.msg)+uniseg.StringWidth(left), ui.msgWin.y)
+		ui.msgWin.print(ui.screen, displaywidth.String(prefix)+printLength(ui.msg), 0, st, left+ui.cmdAccRight)
+		ui.screen.ShowCursor(ui.msgWin.x+displaywidth.String(prefix)+printLength(ui.msg)+displaywidth.String(left), ui.msgWin.y)
 	default:
 		maxWidth := ui.msgWin.w - 1 // leave space for cursor at the end
 		prefix := truncateRight(ui.cmdPrefix, maxWidth)
-		left := truncateLeft(ui.cmdAccLeft, maxWidth-uniseg.StringWidth(prefix))
+		left := truncateLeft(ui.cmdAccLeft, maxWidth-displaywidth.String(prefix))
 		ui.msgWin.printLine(ui.screen, 0, 0, st, prefix+left+ui.cmdAccRight)
-		ui.screen.ShowCursor(ui.msgWin.x+uniseg.StringWidth(prefix)+uniseg.StringWidth(left), ui.msgWin.y)
+		ui.screen.ShowCursor(ui.msgWin.x+displaywidth.String(prefix)+displaywidth.String(left), ui.msgWin.y)
 	}
 
 	ui.drawPreview(nav, &context)
@@ -1340,6 +1357,9 @@ func listFilesInCurrDir(nav *nav) string {
 
 	b := new(strings.Builder)
 	for _, file := range dir.files {
+		if strings.ContainsAny(file.path, "\n\r") {
+			continue
+		}
 		fmt.Fprintln(b, file.path)
 	}
 
@@ -1610,7 +1630,7 @@ func listMatches(screen tcell.Screen, matches []compMatch, selectedInd int) (str
 	wtot, _ := screen.Size()
 	wcol := 0
 	for _, m := range matches {
-		wcol = max(wcol, uniseg.StringWidth(m.name))
+		wcol = max(wcol, printLength(m.name))
 	}
 	wcol += gOpts.tabstop - wcol%gOpts.tabstop
 	ncol := max(wtot/wcol, 1)
@@ -1622,7 +1642,7 @@ func listMatches(screen tcell.Screen, matches []compMatch, selectedInd int) (str
 		if i%ncol == 0 {
 			b.WriteByte('\n')
 		}
-		w := uniseg.StringWidth(match.name)
+		w := printLength(match.name)
 		fmt.Fprintf(&b, "%s%*s", match.name, wcol-w, "")
 	}
 

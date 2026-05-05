@@ -183,6 +183,10 @@ func saveFiles(clipboard clipboard) error {
 	}
 
 	for _, path := range clipboard.paths {
+		if strings.ContainsAny(path, "\n\r") {
+			log.Printf("clipboard: skipping path with newline: %q", path)
+			continue
+		}
 		if _, err := fmt.Fprintln(files, path); err != nil {
 			return fmt.Errorf("write path to file: %w", err)
 		}
@@ -391,8 +395,7 @@ func (app *app) loop() {
 				oldCurrPath = curr.path
 			}
 
-			prev, ok := app.nav.dirCache[d.path]
-			if ok {
+			if prev, ok := app.nav.dirCache[d.path]; ok {
 				d.ind = prev.ind
 				d.pos = prev.pos
 				d.visualAnchor = min(prev.visualAnchor, len(d.files)-1)
@@ -400,6 +403,8 @@ func (app *app) loop() {
 				d.filter = prev.filter
 				d.sort()
 				d.sel(prev.name(), app.nav.height)
+			} else {
+				d.sort()
 			}
 			app.nav.dirCache[d.path] = d
 
@@ -444,11 +449,7 @@ func (app *app) loop() {
 
 			app.ui.draw(app.nav)
 		case f := <-app.nav.fileChan:
-			for _, dir := range app.nav.dirCache {
-				if dir.path != filepath.Dir(f.path) {
-					continue
-				}
-
+			if dir, ok := app.nav.dirCache[filepath.Dir(f.path)]; ok {
 				for i := range dir.allFiles {
 					if dir.allFiles[i].path == f.path {
 						dir.allFiles[i] = f
